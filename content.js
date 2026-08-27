@@ -1,7 +1,54 @@
 let warningOverlay = null;
+let lastText = "";
+let predictionTimer = null;
+
+document.addEventListener("input", function (event) {
+
+    const element = event.target;
+
+    if (
+        element.tagName !== "TEXTAREA" &&
+        element.tagName !== "INPUT" &&
+        !element.isContentEditable
+    ) {
+        return;
+    }
+
+    const text = getText(element).trim();
+
+    if (text.length < 3) {
+        removeWarning();
+        return;
+    }
+
+    if (text === lastText) {
+        return;
+    }
+
+    lastText = text;
+
+    clearTimeout(predictionTimer);
+
+    predictionTimer = setTimeout(async () => {
+
+        const result = await predictBullying(text);
+
+        if (result === 1) {
+            showWarning();
+        } else if (result === 0) {
+            removeWarning();
+        }
+
+    }, 500);
+});
+
 
 function getText(element) {
-    if (element.tagName === "TEXTAREA" || element.tagName === "INPUT") {
+
+    if (
+        element.tagName === "TEXTAREA" ||
+        element.tagName === "INPUT"
+    ) {
         return element.value || "";
     }
 
@@ -12,48 +59,9 @@ function getText(element) {
     return "";
 }
 
-function checkText(element) {
-    const text = getText(element).trim();
-
-    if (text.length < 3) {
-        removeWarning();
-        return;
-    }
-
-    const result = predictBullying(text);
-
-    if (result === 1) {
-        showWarning();
-    } else {
-        removeWarning();
-    }
-}
-
-document.addEventListener("input", function(event) {
-    const element = event.target;
-
-    if (
-        element.tagName === "TEXTAREA" ||
-        element.tagName === "INPUT" ||
-        element.isContentEditable
-    ) {
-        checkText(element);
-    }
-});
-
-document.addEventListener("keyup", function(event) {
-    const element = event.target;
-
-    if (
-        element.tagName === "TEXTAREA" ||
-        element.tagName === "INPUT" ||
-        element.isContentEditable
-    ) {
-        checkText(element);
-    }
-});
 
 function showWarning() {
+
     if (warningOverlay) {
         return;
     }
@@ -143,7 +151,7 @@ function showWarning() {
     button.style.fontWeight = "bold";
     button.style.cursor = "pointer";
 
-    button.addEventListener("click", function() {
+    button.addEventListener("click", function () {
         removeWarning();
     });
 
@@ -157,7 +165,9 @@ function showWarning() {
     document.body.appendChild(warningOverlay);
 }
 
+
 function removeWarning() {
+
     if (warningOverlay) {
         warningOverlay.remove();
         warningOverlay = null;

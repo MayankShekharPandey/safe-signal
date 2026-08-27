@@ -2,15 +2,32 @@
   "manifest_version": 3,
   "name": "Safe Signal",
   "version": "1.0",
-  "description": "An on-device Chrome extension that detects potentially harmful or bullying text.",
+  "description": "On-device cyberbullying detection.",
+
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["model.js", "content.js"],
+      "js": [
+        "libs/ort.min.js",
+        "tokenizer.js",
+        "model.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
+
   "action": {
     "default_popup": "popup.html"
-  }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "model/*",
+        "libs/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
