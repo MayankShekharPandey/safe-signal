@@ -1,63 +1,71 @@
 let vocab = null;
+let tokenizerReady = null;
 
 async function loadTokenizer() {
-    const vocabUrl = chrome.runtime.getURL(
-        "model/vocab.txt"
-    );
-
-    const response = await fetch(vocabUrl);
-
-    if (!response.ok) {
-        throw new Error("Could not load vocab.txt");
+    if (vocab) {
+        return;
     }
 
-    const text = await response.text();
+    if (tokenizerReady) {
+        await tokenizerReady;
+        return;
+    }
 
-    vocab = new Map();
+    tokenizerReady = (async () => {
+        const vocabUrl = chrome.runtime.getURL("model/vocab.txt");
+        const response = await fetch(vocabUrl);
 
-    const lines = text.split(/\r?\n/);
-
-    lines.forEach((token, index) => {
-        if (token !== "") {
-            vocab.set(token, index);
+        if (!response.ok) {
+            throw new Error("Could not load vocab.txt");
         }
-    });
+
+        const text = await response.text();
+        vocab = new Map();
+
+        const lines = text.split(/\r?\n/);
+        lines.forEach((token, index) => {
+            if (token !== "") {
+                vocab.set(token, index);
+            }
+        });
+
+        safeSignalLog("Tokenizer loaded", { tokens: vocab.size });
+    })();
+
+    try {
+        await tokenizerReady;
+    } catch (error) {
+        tokenizerReady = null;
+        throw error;
+    }
 }
 
 function basicTokenize(text) {
     text = text.toLowerCase();
-
     return text.match(/[a-z0-9]+|[^a-z0-9\s]/g) || [];
 }
 
 function wordPieceTokenize(word) {
-
     if (vocab.has(word)) {
         return [word];
     }
 
     const tokens = [];
-
     let start = 0;
 
     while (start < word.length) {
-
         let end = word.length;
         let current = null;
 
         while (start < end) {
-
             let piece = word.substring(start, end);
-
             if (start > 0) {
                 piece = "##" + piece;
             }
-
             if (vocab.has(piece)) {
                 current = piece;
                 break;
             }
-
             end--;
         }
 
@@ -66,7 +74,6 @@ function wordPieceTokenize(word) {
         }
 
         tokens.push(current);
-
         start = end;
     }
 
@@ -74,47 +81,41 @@ function wordPieceTokenize(word) {
 }
 
 function tokenize(text) {
-
     if (!vocab) {
         throw new Error("Tokenizer has not been loaded.");
     }
 
     const basicTokens = basicTokenize(text);
-
     let wordPieces = [];
 
     for (const word of basicTokens) {
         wordPieces.push(...wordPieceTokenize(word));
     }
 
-    const tokens = [
-        "[CLS]",
-        ...wordPieces,
-        "[SEP]"
-    ];
-
+    const tokens = ["[CLS]", ...wordPieces, "[SEP]"];
     const maxLength = 128;
-
     const finalTokens = tokens.slice(0, maxLength);
 
-    const inputIds = finalTokens.map(token => {
-        return vocab.has(token)
-            ? vocab.get(token)
-            : vocab.get("[UNK]");
+    const padId = vocab.get("[PAD]");
+    const unkId = vocab.get("[UNK]");
+
+    const inputIds = finalTokens.map((token) => {
+        return vocab.has(token) ? vocab.get(token) : unkId;
     });
 
     while (inputIds.length < maxLength) {
-        inputIds.push(vocab.get("[PAD]"));
+        inputIds.push(padId);
     }
 
     const attentionMask = inputIds.map((id, index) => {
         return index < finalTokens.length ? 1 : 0;
     });
 
+    const tokenTypeIds = new Array(maxLength).fill(0);
+
     return {
         inputIds,
-        attentionMask
+        attentionMask,
+        tokenTypeIds
     };
 }
-
-loadTokenizer();

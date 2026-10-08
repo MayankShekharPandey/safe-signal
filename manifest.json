@@ -1,24 +1,37 @@
 {
   "manifest_version": 3,
   "name": "Safe Signal",
-  "version": "1.0",
+  "version": "1.1",
   "description": "On-device cyberbullying detection.",
+  "minimum_chrome_version": "116",
+
+  "permissions": [
+    "offscreen",
+    "storage"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
 
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
       "js": [
-        "libs/ort.min.js",
-        "tokenizer.js",
-        "model.js",
+        "config.js",
         "content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
 
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_title": "Safe Signal"
   },
 
   "web_accessible_resources": [
@@ -27,7 +40,14 @@
         "model/*",
         "libs/*"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ]
     }
-  ]
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  }
 }

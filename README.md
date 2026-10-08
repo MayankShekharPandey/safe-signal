@@ -1,110 +1,137 @@
 # Safe Signal
 
-Safe Signal is an on-device Chrome extension designed to detect potentially bullying or harmful text during user input. The system performs text classification locally within the browser using a fine-tuned BERT sequence-classification model converted to the ONNX format. This approach eliminates the requirement for a backend server during inference and helps preserve user privacy.
+Safe Signal is an on-device Chrome extension that detects potentially bullying or harmful text while you type. Classification runs locally in the browser with a fine-tuned BERT sequence-classification model in ONNX format. User text is not sent to an external API.
 
-## System Workflow
+## Why Reddit failed before
 
-The Safe Signal system follows the following processing pipeline:
+The original prototype loaded ONNX Runtime and the BERT model **inside the page content script**. That works on a local `test.html` page because there is no strict site CSP and script URLs resolve correctly.
+
+On Reddit it failed for two independent reasons:
+
+1. Reddit’s Content Security Policy blocks WebAssembly compilation (`wasm-unsafe-eval`). ONNX Runtime Web never finished initializing, `session` stayed `null`, and `predictBullying()` returned `null` with no warning.
+2. In a content script, `document.currentScript` is empty, so ONNX Runtime could not find `libs/ort-wasm-simd-threaded.jsep.wasm` and tried to load it from `reddit.com` instead of the extension.
+
+A local test file never hits either restriction, so the model appeared to work there.
+
+## Current architecture
 
 ```text
-User Input
+Website (Reddit or other HTTP/HTTPS pages)
     |
     v
-BERT WordPiece Tokenizer
+Content script (input, focus, MutationObserver, debounce)
     |
     v
-Tokenized Input (Maximum Sequence Length: 128)
+Service worker (creates/keeps offscreen document)
     |
     v
-ONNX BERT Classification Model
+Offscreen document (ONNX Runtime + tokenizer + BERT, loaded once)
     |
     v
-Bullying Probability
+Toxicity probability
     |
     v
-Confidence Threshold (90%)
-    |
-    +--------------------+
-    |                    |
-    v                    v
-Probability >= 90%    Probability < 90%
-    |                    |
-    v                    v
-Warning Displayed     No Warning
+Content script warning popup if score >= threshold
 ```
 
-## Features
+The content script only detects typing and shows UI. Inference always runs in the extension offscreen document, which uses the extension CSP and can load WASM.
 
-* On-device text classification
-* Local inference without transmission of user text to a server
-* Fine-tuned BERT-based bullying detection
-* ONNX-based browser inference
-* Real-time analysis of user-entered text
-* Warning notification for text classified with high bullying probability
-* Chrome Extension implementation using Manifest V3
+## Model
 
-## Model Architecture
+| Parameter | Configuration |
+| --- | --- |
+| Architecture | BERT (`BertForSequenceClassification`) |
+| Format | ONNX + external `.onnx.data` |
+| Classes | 0 = not bullying, 1 = bullying |
+| Max sequence length | 128 tokens |
+| Default threshold | 0.90 (configurable in the popup) |
+| Runtime | ONNX Runtime Web 1.29 (WebGPU, then WASM) |
 
-The extension uses a fine-tuned BERT sequence-classification model for binary text classification.
-
-| Parameter               | Configuration            |
-| ----------------------- | ------------------------ |
-| Model Architecture      | BERT                     |
-| Model Format            | ONNX                     |
-| Classification Type     | Binary Classification    |
-| Class 0                 | Not Bullying             |
-| Class 1                 | Bullying                 |
-| Maximum Sequence Length | 128 tokens               |
-| Warning Threshold       | 90% bullying probability |
-| Inference Environment   | Web Browser              |
-| Inference Framework     | ONNX Runtime Web         |
-
-The input text is first processed using a BERT WordPiece tokenizer. The resulting token sequence is limited to a maximum length of 128 tokens and subsequently passed to the ONNX-based BERT classification model. The model produces class probabilities, from which the probability associated with the bullying class is obtained.
-
-If the predicted bullying probability is greater than or equal to 90%, the extension generates a warning notification. The 90% value represents the operational decision threshold of the prototype and should not be interpreted as the accuracy of the classification model.
-
-## Technology Stack
-
-The implementation uses the following technologies:
-
-* Chrome Extension Manifest V3
-* JavaScript
-* BERT
-* WordPiece Tokenization
-* ONNX
-* ONNX Runtime Web
-
-## Project Structure
+## Project structure
 
 ```text
 Safe-Signal/
 ├── manifest.json
+├── config.js
 ├── content.js
+├── background.js
+├── offscreen.html
+├── offscreen.js
 ├── model.js
 ├── tokenizer.js
 ├── popup.html
 ├── popup.js
 ├── test.html
-│
 ├── model/
 │   ├── safe_signal_bullying.onnx
 │   ├── safe_signal_bullying.onnx.data
 │   └── vocab.txt
-│
 └── libs/
     ├── ort.min.js
     ├── ort-wasm-simd-threaded.jsep.mjs
     └── ort-wasm-simd-threaded.jsep.wasm
 ```
 
-## Deployment
+## Install and test
 
-The extension can be deployed locally using the Chrome Extensions interface. The user can enable Developer Mode in `chrome://extensions` and load the project directory using the "Load unpacked" option.
+There is no npm install step. The model and ONNX Runtime files are already in the repo.
 
-## Privacy and Security
+1. Open Chrome and go to `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and select this project folder.
+4. Wait for the first model load. The `.onnx.data` file is large (~438 MB), so the first initialization can take a while. Watch the **service worker** and **offscreen** consoles if needed.
+5. Open [https://www.reddit.com](https://www.reddit.com) and start a comment or post.
+6. Type safe text such as `I really liked your post.` — no warning should appear.
+7. Type a clearly toxic insult (keep it non-graphic) and pause ~500 ms — a warning card should appear.
 
-Safe Signal performs inference locally within the user's browser. User-entered text is processed by the tokenizer and classification model without requiring transmission to an external server or backend API. Consequently, the system is designed to minimize the exposure of potentially sensitive user-generated content.
+Optional engine test without Reddit:
 
-## Project Status
+1. Copy the extension ID from `chrome://extensions`.
+2. Open `chrome-extension://<id>/test.html`.
+3. Click **Run detection**.
 
-The current implementation is a prototype demonstrating browser-based, on-device bullying-text classification using a fine-tuned BERT model and ONNX Runtime Web. Further development can focus on improving classification performance, reducing inference latency, handling contextual and ambiguous language, and evaluating the system across diverse forms of harmful and bullying content.
+## Debug logs
+
+With **Enable debug logs** checked in the popup, the page console shows:
+
+- `[CyberGuard] Content script loaded`
+- `[CyberGuard] ML engine initialized`
+- `[CyberGuard] Input detected`
+- `[CyberGuard] Running inference` (offscreen console)
+- `[CyberGuard] Prediction: toxic=0.91`
+- `[CyberGuard] Warning displayed`
+
+### BERT does not load
+
+- `chrome://extensions` → Safe Signal → **Inspect views: Offscreen document**
+- Look for tokenizer/model fetch errors or WASM errors
+- Confirm `model/safe_signal_bullying.onnx`, `.onnx.data`, and `libs/ort-wasm-simd-threaded.jsep.wasm` exist
+
+### Reddit is not detected
+
+- On the Reddit tab, open DevTools → Console
+- You must see `[CyberGuard] Content script loaded`
+- If not, reload the extension, then reload Reddit
+- Focus the comment box and look for `[CyberGuard] Editor focused` / `Input detected`
+
+### Prediction does not return
+
+- Inspect the **service worker** and **offscreen document**
+- First-time load may still be reading the 438 MB weights
+- After reload of the extension, refresh Reddit so the content script reconnects
+
+### Popup does not appear
+
+- Confirm a log line `Prediction: toxic=...` with a value at or above the popup threshold
+- Safe text will not show a warning
+- Only one warning card is shown at a time
+
+### WebGPU fails
+
+- This is expected on many machines
+- The engine falls back to WASM automatically
+- A complete failure means WASM also failed; check the offscreen console
+
+## Privacy
+
+Inference stays on-device. The extension does not send comment text to a remote model API. The warning UI uses `textContent` and does not inject unsanitized HTML.
